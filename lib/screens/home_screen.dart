@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import '../models/libro.dart';
+import '../services/storage_service.dart';
 import 'form_screen.dart';
 import 'lista_screen.dart';
+import 'login_screen.dart';
 
 class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+  final String usuario;
+  const HomeScreen({super.key, required this.usuario});
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -12,16 +15,35 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   final List<Libro> _libros = [];
-  int _selectedIndex = 0;
+  int  _selectedIndex = 0;
+  bool _cargando      = true;
 
-  void _agregarLibro(Libro libro) {
+  @override
+  void initState() {
+    super.initState();
+    _cargarLibros();
+  }
+
+  Future<void> _cargarLibros() async {
+    final libros = await StorageService.leerLibros();
     setState(() {
-      _libros.add(libro);
+      _libros
+        ..clear()
+        ..addAll(libros);
+      _cargando = false;
     });
-    // Notificación snackbar
+  }
+
+  // ---------- ACCIONES ----------
+
+  Future<void> _agregarLibro(Libro libro) async {
+    setState(() => _libros.add(libro));
+    await StorageService.guardarLibros(_libros);
+
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('✅ "${libro.titulo}" agregado a tu biblioteca'),
+        content: Text('"${libro.titulo}" agregado a tu biblioteca.'),
         backgroundColor: const Color(0xFF5C4033),
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 3),
@@ -31,31 +53,134 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _eliminarLibro(int index) {
     final nombre = _libros[index].titulo;
-    // Alerta de confirmación
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Eliminar libro'),
-        content: Text('¿Seguro que deseas eliminar "$nombre"?'),
+        content: Text('Deseas eliminar "$nombre"?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
               setState(() => _libros.removeAt(index));
+              await StorageService.guardarLibros(_libros);
+              if (!mounted) return;
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content: Text('🗑️ "$nombre" eliminado'),
+                  content: Text('"$nombre" eliminado.'),
                   backgroundColor: Colors.red,
                   behavior: SnackBarBehavior.floating,
                 ),
               );
             },
-            child: const Text('Eliminar', style: TextStyle(color: Colors.white)),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _cerrarSesion() async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cerrar sesion'),
+        content: Text('Deseas salir, ${widget.usuario}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Salir'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar == true) {
+      await StorageService.cerrarSesion();
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const LoginScreen()),
+      );
+    }
+  }
+
+  void _mostrarEstadisticas() {
+    final leidos    = _libros.where((l) => l.leido).length;
+    final pendientes = _libros.length - leidos;
+    final promedio  = _libros.isEmpty
+        ? 0.0
+        : _libros.map((l) => l.calificacion).reduce((a, b) => a + b) /
+            _libros.length;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Estadisticas'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _statRow('Total de libros',       '${_libros.length}'),
+            _statRow('Libros leidos',          '$leidos'),
+            _statRow('Pendientes de leer',     '$pendientes'),
+            _statRow('Calificacion promedio',  promedio.toStringAsFixed(1)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmarLimpiar() {
+    if (_libros.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('La biblioteca ya esta vacia.')),
+      );
+      return;
+    }
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Limpiar biblioteca'),
+        content: const Text('Se eliminaran todos los libros. Deseas continuar?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              setState(() => _libros.clear());
+              await StorageService.guardarLibros(_libros);
+              if (!mounted) return;
+              Navigator.pop(ctx);
+            },
+            child: const Text('Limpiar todo'),
           ),
         ],
       ),
@@ -66,13 +191,34 @@ class _HomeScreenState extends State<HomeScreen> {
     showAboutDialog(
       context: context,
       applicationName: 'Biblioteca Personal',
-      applicationVersion: '1.0.0',
-      applicationIcon: const Icon(Icons.menu_book, size: 48, color: Color(0xFF5C4033)),
+      applicationVersion: '2.0.0',
+      applicationIcon: const Icon(
+        Icons.menu_book_rounded,
+        size: 48,
+        color: Color(0xFF5C4033),
+      ),
       children: [
-        const Text('App para gestionar tu colección de libros personal. POWER BY MAVB Universidad de Cartagena'),
+        const Text(
+            'Aplicacion para gestionar tu coleccion de libros personal.'),
       ],
     );
   }
+
+  Widget _statRow(String label, String valor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label),
+          Text(valor,
+              style: const TextStyle(fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  // ---------- BUILD ----------
 
   @override
   Widget build(BuildContext context) {
@@ -84,26 +230,49 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF5C4033),
-        title: const Text(
-          '📚 Mi Biblioteca',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Biblioteca Personal',
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold),
+            ),
+            Text(
+              'Hola, ${widget.usuario}',
+              style: const TextStyle(
+                  color: Colors.white70, fontSize: 12),
+            ),
+          ],
         ),
-        // MENÚ en AppBar (PopupMenuButton)
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.more_vert, color: Colors.white),
             onSelected: (value) {
-              if (value == 'acerca') _mostrarAcercaDe();
-              if (value == 'limpiar') _confirmarLimpiar();
-              if (value == 'stats') _mostrarEstadisticas();
+              switch (value) {
+                case 'stats':
+                  _mostrarEstadisticas();
+                  break;
+                case 'limpiar':
+                  _confirmarLimpiar();
+                  break;
+                case 'logout':
+                  _cerrarSesion();
+                  break;
+                case 'acerca':
+                  _mostrarAcercaDe();
+                  break;
+              }
             },
-            itemBuilder: (ctx) => [
+            itemBuilder: (_) => [
               const PopupMenuItem(
                 value: 'stats',
                 child: Row(children: [
-                  Icon(Icons.bar_chart, color: Color(0xFF5C4033)),
+                  Icon(Icons.bar_chart),
                   SizedBox(width: 8),
-                  Text('Estadísticas'),
+                  Text('Estadisticas'),
                 ]),
               ),
               const PopupMenuItem(
@@ -116,9 +285,18 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const PopupMenuDivider(),
               const PopupMenuItem(
+                value: 'logout',
+                child: Row(children: [
+                  Icon(Icons.logout, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text('Cerrar sesion'),
+                ]),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem(
                 value: 'acerca',
                 child: Row(children: [
-                  Icon(Icons.info_outline, color: Colors.grey),
+                  Icon(Icons.info_outline),
                   SizedBox(width: 8),
                   Text('Acerca de'),
                 ]),
@@ -127,82 +305,24 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      // MENÚ inferior (BottomNavigationBar)
-      body: screens[_selectedIndex],
+      body: _cargando
+          ? const Center(child: CircularProgressIndicator())
+          : screens[_selectedIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         selectedItemColor: const Color(0xFF5C4033),
         onTap: (index) => setState(() => _selectedIndex = index),
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.library_books), label: 'Mi Biblioteca'),
-          BottomNavigationBarItem(icon: Icon(Icons.add_box), label: 'Agregar Libro'),
-        ],
-      ),
-    );
-  }
-
-  void _confirmarLimpiar() {
-    if (_libros.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('La biblioteca ya está vacía')),
-      );
-      return;
-    }
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('⚠️ Limpiar biblioteca'),
-        content: const Text('Se eliminarán TODOS los libros. ¿Continuar?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancelar')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            onPressed: () {
-              setState(() => _libros.clear());
-              Navigator.pop(ctx);
-            },
-            child: const Text('Sí, limpiar', style: TextStyle(color: Colors.white)),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.library_books_outlined),
+            activeIcon: Icon(Icons.library_books),
+            label: 'Mi Biblioteca',
           ),
-        ],
-      ),
-    );
-  }
-
-  void _mostrarEstadisticas() {
-    final leidos = _libros.where((l) => l.leido).length;
-    final pendientes = _libros.length - leidos;
-    final promedio = _libros.isEmpty
-        ? 0.0
-        : _libros.map((l) => l.calificacion).reduce((a, b) => a + b) / _libros.length;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('📊 Estadísticas'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _statRow('Total de libros', '${_libros.length}'),
-            _statRow('Libros leídos', '$leidos'),
-            _statRow('Pendientes', '$pendientes'),
-            _statRow('Calificación promedio', promedio.toStringAsFixed(1)),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cerrar')),
-        ],
-      ),
-    );
-  }
-
-  Widget _statRow(String label, String valor) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label),
-          Text(valor, style: const TextStyle(fontWeight: FontWeight.bold)),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.add_box_outlined),
+            activeIcon: Icon(Icons.add_box),
+            label: 'Agregar Libro',
+          ),
         ],
       ),
     );
