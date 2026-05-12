@@ -25,21 +25,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _cargarLibros() async {
-    final libros = await StorageService.leerLibros();
+    final libros = await StorageService.leerLibros(widget.usuario);
     setState(() {
-      _libros
-        ..clear()
-        ..addAll(libros);
+      _libros..clear()..addAll(libros);
       _cargando = false;
     });
   }
 
-  // ---------- ACCIONES ----------
+  // ─── AGREGAR ─────────────────────────────────────────
 
   Future<void> _agregarLibro(Libro libro) async {
     setState(() => _libros.add(libro));
-    await StorageService.guardarLibros(_libros);
-
+    await StorageService.guardarLibros(widget.usuario, _libros);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -50,6 +47,8 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  // ─── ELIMINAR UNO ─────────────────────────────────────
 
   void _eliminarLibro(int index) {
     final nombre = _libros[index].titulo;
@@ -70,7 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             onPressed: () async {
               setState(() => _libros.removeAt(index));
-              await StorageService.guardarLibros(_libros);
+              await StorageService.guardarLibros(widget.usuario, _libros);
               if (!mounted) return;
               Navigator.pop(ctx);
               ScaffoldMessenger.of(context).showSnackBar(
@@ -87,6 +86,59 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  // ─── ELIMINAR VARIOS ─────────────────────────────────
+  // Recibe una lista de indices, los ordena de mayor a menor
+  // para no desplazar los indices al borrar
+
+  void _eliminarVarios(List<int> indices) {
+    if (indices.isEmpty) return;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Eliminar libros'),
+        content: Text(
+          'Se eliminaran ${indices.length} libro(s) seleccionado(s). Deseas continuar?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () async {
+              // Ordenar de mayor a menor para no correr indices
+              final ordenados = List<int>.from(indices)
+                ..sort((a, b) => b.compareTo(a));
+              setState(() {
+                for (final i in ordenados) {
+                  _libros.removeAt(i);
+                }
+              });
+              await StorageService.guardarLibros(widget.usuario, _libros);
+              if (!mounted) return;
+              Navigator.pop(ctx);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('${indices.length} libro(s) eliminado(s).'),
+                  backgroundColor: Colors.red,
+                  behavior: SnackBarBehavior.floating,
+                ),
+              );
+            },
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── LOGOUT ──────────────────────────────────────────
 
   Future<void> _cerrarSesion() async {
     final confirmar = await showDialog<bool>(
@@ -121,36 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _mostrarEstadisticas() {
-    final leidos    = _libros.where((l) => l.leido).length;
-    final pendientes = _libros.length - leidos;
-    final promedio  = _libros.isEmpty
-        ? 0.0
-        : _libros.map((l) => l.calificacion).reduce((a, b) => a + b) /
-            _libros.length;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Estadisticas'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _statRow('Total de libros',       '${_libros.length}'),
-            _statRow('Libros leidos',          '$leidos'),
-            _statRow('Pendientes de leer',     '$pendientes'),
-            _statRow('Calificacion promedio',  promedio.toStringAsFixed(1)),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cerrar'),
-          ),
-        ],
-      ),
-    );
-  }
+  // ─── LIMPIAR ─────────────────────────────────────────
 
   void _confirmarLimpiar() {
     if (_libros.isEmpty) {
@@ -176,11 +199,44 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             onPressed: () async {
               setState(() => _libros.clear());
-              await StorageService.guardarLibros(_libros);
+              await StorageService.limpiarLibros(widget.usuario);
               if (!mounted) return;
               Navigator.pop(ctx);
             },
             child: const Text('Limpiar todo'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ─── ESTADISTICAS ────────────────────────────────────
+
+  void _mostrarEstadisticas() {
+    final leidos     = _libros.where((l) => l.leido).length;
+    final pendientes = _libros.length - leidos;
+    final promedio   = _libros.isEmpty
+        ? 0.0
+        : _libros.map((l) => l.calificacion).reduce((a, b) => a + b) /
+            _libros.length;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Estadisticas'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _statRow('Total de libros',      '${_libros.length}'),
+            _statRow('Libros leidos',         '$leidos'),
+            _statRow('Pendientes de leer',    '$pendientes'),
+            _statRow('Calificacion promedio', promedio.toStringAsFixed(1)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cerrar'),
           ),
         ],
       ),
@@ -198,8 +254,7 @@ class _HomeScreenState extends State<HomeScreen> {
         color: Color(0xFF5C4033),
       ),
       children: [
-        const Text(
-            'Aplicacion para gestionar tu coleccion de libros personal.'),
+        const Text('Aplicacion para gestionar tu coleccion de libros personal.'),
       ],
     );
   }
@@ -211,19 +266,22 @@ class _HomeScreenState extends State<HomeScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label),
-          Text(valor,
-              style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text(valor, style: const TextStyle(fontWeight: FontWeight.bold)),
         ],
       ),
     );
   }
 
-  // ---------- BUILD ----------
+  // ─── BUILD ───────────────────────────────────────────
 
   @override
   Widget build(BuildContext context) {
     final screens = [
-      ListaScreen(libros: _libros, onEliminar: _eliminarLibro),
+      ListaScreen(
+        libros: _libros,
+        onEliminar: _eliminarLibro,
+        onEliminarVarios: _eliminarVarios,   // <-- nuevo
+      ),
       FormScreen(onAgregarLibro: _agregarLibro),
     ];
 
@@ -236,14 +294,14 @@ class _HomeScreenState extends State<HomeScreen> {
             const Text(
               'Biblioteca Personal',
               style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold),
+                color: Colors.white,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+              ),
             ),
             Text(
               'Hola, ${widget.usuario}',
-              style: const TextStyle(
-                  color: Colors.white70, fontSize: 12),
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
             ),
           ],
         ),
@@ -252,18 +310,10 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.more_vert, color: Colors.white),
             onSelected: (value) {
               switch (value) {
-                case 'stats':
-                  _mostrarEstadisticas();
-                  break;
-                case 'limpiar':
-                  _confirmarLimpiar();
-                  break;
-                case 'logout':
-                  _cerrarSesion();
-                  break;
-                case 'acerca':
-                  _mostrarAcercaDe();
-                  break;
+                case 'stats':   _mostrarEstadisticas(); break;
+                case 'limpiar': _confirmarLimpiar();    break;
+                case 'logout':  _cerrarSesion();        break;
+                case 'acerca':  _mostrarAcercaDe();     break;
               }
             },
             itemBuilder: (_) => [
